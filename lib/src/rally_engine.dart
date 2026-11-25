@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:studio_core/core/arcade.dart';
+import 'package:studio_core/core/arcade_duel.dart';
 import 'package:studio_core/core/level_plan.dart';
 import 'package:studio_core/core/rng.dart';
 
@@ -34,7 +35,7 @@ class RallyGeom {
 const kTT = RallyGeom(250, 750, 300, 1300, 800, 34, 0.2, 0.8, 95, 15, 23, 24, 1230, 1520);
 const kTennis = RallyGeom(220, 780, 220, 1380, 800, 46, 0.16, 0.72, 115, 17, 26, 20, 1250, 1560);
 
-class RallySim extends ArcadeSim {
+class RallySim extends ArcadeSim implements DuelSim {
   final RallyLevel level;
   final RallyGeom g;
   // ball
@@ -60,6 +61,11 @@ class RallySim extends ArcadeSim {
   int flashTicks = 0;
   int cpuErrCount = 0;
   bool cpuWillMiss = false;
+
+  /// Çevrimiçi düello: üst raketi karşıdaki oyuncu sürer (null: yapay zekâ).
+  ArcadeInput? _rival;
+  int rivalPower = 0;
+  bool duel = false;
 
   RallySim(this.level)
       : g = level.kind == RallyKind.tennis ? kTennis : kTT,
@@ -151,6 +157,39 @@ class RallySim extends ArcadeSim {
     lastHitter = 0;
     rally++;
     lastEvent = 1;
+  }
+
+  /// Karşıdaki oyuncunun vuruşu: oyuncununkinin aynası (raketin neresine
+  /// değdiği yönü belirler, kaydırınca sert vuruş).
+  void _rivalHit({bool serve = false}) {
+    final off = clampD((cx - bx) / g.reach, -1, 1);
+    final tx = g.cx + off * g.halfW * 0.92;
+    final pow = rivalPower > 0 && !serve;
+    final depth = pow ? 0.82 : 0.68;
+    final ty = g.net - (g.net - g.t) * depth;
+    _launch(kWorldW - tx, kWorldH - ty, pow ? g.power : g.speed);
+    rivalPower = 0;
+    lastHitter = 1;
+    rally++;
+    lastEvent = 1;
+  }
+
+  /// Karşıdaki oyuncunun raketi: oyuncununkiyle aynı kurallar, masa ters.
+  void _moveRival(ArcadeInput raw) {
+    final i = mirrorInput(raw);
+    var tx = cx, ty = cy;
+    if (i.down && i.hasPointer) {
+      tx = i.x;
+      ty = i.y + 40;
+    }
+    if (i.dirX != 0) tx = cx + i.dirX * 40;
+    if (i.dirY != 0) ty = cy + i.dirY * 40;
+    tx = clampD(tx, g.l - 150, g.r + 150);
+    ty = clampD(ty, kWorldH - g.maxY, kWorldH - g.minY);
+    cx = moveToward(cx, tx, g.pSpeed);
+    cy = moveToward(cy, ty, g.pSpeed * 0.7);
+    ctx = cx;
+    cty = cy;
   }
 
   void _cpuHit({bool serve = false}) {
@@ -256,6 +295,10 @@ class RallySim extends ArcadeSim {
     if (power > 0) power--;
     if (input.swipe == 0) power = 24;
     _movePlayer(input);
+    final rival = _rival;
+    if (rivalPower > 0) rivalPower--;
+    if (rival != null && rival.swipe == 0) rivalPower = 24;
+    if (rival != null) _moveRival(rival);
     if (pause > 0) {
       pause--;
       if (pause == 0) _newPoint();
@@ -263,10 +306,10 @@ class RallySim extends ArcadeSim {
     }
     if (!live) {
       _serve(input);
-      _moveCpu();
+      if (rival == null) _moveCpu();
       return;
     }
-    _moveCpu();
+    if (rival == null) _moveCpu();
     _stepBall();
   }
 
@@ -277,6 +320,12 @@ class RallySim extends ArcadeSim {
       if ((input.tap || input.swipe == 0 || serveWait > 180) && serveWait > 20) {
         bz = 70;
         _playerHit(serve: true);
+      }
+    } else if (_rival != null) {
+      final r = _rival!;
+      if ((r.tap || r.swipe == 0 || serveWait > 180) && serveWait > 20) {
+        bz = 70;
+        _rivalHit(serve: true);
       }
     } else if (serveWait > 50) {
       bz = 70;
@@ -375,12 +424,123 @@ class RallySim extends ArcadeSim {
       if (lastHitter == 1 && by > g.net) {
         if ((bx - px).abs() < g.reach && (by - py).abs() < 55) _playerHit();
       } else if (lastHitter == 0 && by < g.net) {
-        if ((bx - cx).abs() < g.reach * 0.85 && (by - cy).abs() < 55) _cpuHit();
+        if (_rival != null) {
+          if ((bx - cx).abs() < g.reach && (by - cy).abs() < 55) _rivalHit();
+        } else if ((bx - cx).abs() < g.reach * 0.85 && (by - cy).abs() < 55) {
+          _cpuHit();
+        }
       }
     }
     if (by > kWorldH + 100 || by < -100 || bx < -200 || bx > kWorldW + 200) {
       _point(lastHitter == 0 ? bounces >= 1 : bounces < 1);
     }
+  }
+
+  // ---- DuelSim ----
+
+  @override
+  set rivalInput(ArcadeInput? input) => _rival = input;
+
+  @override
+  void enableDuel() {
+    duel = true;
+    lives = 1;
+  }
+
+  @override
+  int get duelWinner => won ? 0 : (dead ? 1 : -1);
+
+  @override
+  List<double> netState() => [
+        ticks.toDouble(), bx, by, bz, vx, vy, vz, //
+        live ? 1.0 : 0.0, lastHitter.toDouble(), bounces.toDouble(), netChecked ? 1.0 : 0.0,
+        px, py, cx, cy, ctx, cty,
+        power.toDouble(), rivalPower.toDouble(), server.toDouble(), serveWait.toDouble(), pause.toDouble(),
+        myPts.toDouble(), cpuPts.toDouble(), myGames.toDouble(), cpuGames.toDouble(),
+        ptsToWin.toDouble(), gamesToWin.toDouble(), rally.toDouble(),
+        flashCode(flash, _flashes).toDouble(), flashTicks.toDouble(), lastEvent.toDouble(), score.toDouble(),
+        won ? 1.0 : 0.0, dead ? 1.0 : 0.0,
+      ];
+
+  @override
+  void applyNetState(List<double> s) {
+    if (s.length < 35) return;
+    int n(int i) => s[i].round();
+    ticks = n(0);
+    bx = s[1];
+    by = s[2];
+    bz = s[3];
+    vx = s[4];
+    vy = s[5];
+    vz = s[6];
+    live = s[7] > 0.5;
+    lastHitter = n(8);
+    bounces = n(9);
+    netChecked = s[10] > 0.5;
+    px = s[11];
+    py = s[12];
+    cx = s[13];
+    cy = s[14];
+    ctx = s[15];
+    cty = s[16];
+    power = n(17);
+    rivalPower = n(18);
+    server = n(19);
+    serveWait = n(20);
+    pause = n(21);
+    myPts = n(22);
+    cpuPts = n(23);
+    myGames = n(24);
+    cpuGames = n(25);
+    ptsToWin = n(26);
+    gamesToWin = n(27);
+    rally = n(28);
+    flash = _flashes[n(29).clamp(0, _flashes.length - 1)];
+    flashTicks = n(30);
+    lastEvent = n(31);
+    score = n(32);
+    if (s[33] > 0.5 && !won) win();
+    if (s[34] > 0.5 && !dead) {
+      lives = 1;
+      shield = 0;
+      hit();
+    }
+  }
+
+  @override
+  List<double> lerpNet(List<double> a, List<double> b, double f) =>
+      lerpAt(a, b, f, const [1, 2, 3, 11, 12, 13, 14]);
+
+  @override
+  void mirrorView() {
+    bx = kWorldW - bx;
+    by = kWorldH - by;
+    vx = -vx;
+    vy = -vy;
+    lastHitter = 1 - lastHitter;
+    final ox = px, oy = py;
+    px = kWorldW - cx;
+    py = kWorldH - cy;
+    cx = kWorldW - ox;
+    cy = kWorldH - oy;
+    ctx = kWorldW - ctx;
+    cty = kWorldH - cty;
+    final pw = power;
+    power = rivalPower;
+    rivalPower = pw;
+    server = 1 - server;
+    final mp = myPts, mg = myGames;
+    myPts = cpuPts;
+    myGames = cpuGames;
+    cpuPts = mp;
+    cpuGames = mg;
+    if (lastEvent == 2) {
+      lastEvent = 3;
+    } else if (lastEvent == 3) {
+      lastEvent = 2;
+    }
+    const swap = {'POINT!': 'POINT ×', 'POINT ×': 'POINT!', 'GAME!': 'GAME ×', 'GAME ×': 'GAME!'};
+    flash = swap[flash] ?? flash;
   }
 
   @override
@@ -431,6 +591,8 @@ class RallySim extends ArcadeSim {
     return math.min(lifeStars(this, 3), q);
   }
 }
+
+const _flashes = ['', 'POINT!', 'OUT', 'POINT ×', 'GAME!', 'GAME ×', 'NET'];
 
 /// Autopilot: moves to the predicted hit point and angles the racket away
 /// from the rival.

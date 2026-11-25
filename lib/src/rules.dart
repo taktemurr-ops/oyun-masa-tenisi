@@ -11,6 +11,10 @@ class TableTennisRules extends ArcadeRules<RallyLevel> {
   @override
   List<String> get optionalMechanics => const [];
 
+  /// İki kişilik: "Bilgisayara karşı" ve "Çevrimiçi masa" (gerçek zamanlı düello).
+  @override
+  int get localPlayers => 2;
+
   @override
   List<GameStat> get gameStats => const [
         GameStat('points_won', 'Kazanılan sayı', 'Points won', scale: 500),

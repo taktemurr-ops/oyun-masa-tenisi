@@ -2,6 +2,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:studio_core/app/arcade_duel_stage.dart';
 import 'package:studio_core/app/arcade_stage.dart';
 import 'package:studio_core/app/game_api.dart';
 import 'package:studio_core/core/game_rules.dart';
@@ -127,7 +128,15 @@ final masaTenisiConfig = GameConfig(
   seedColor: const Color(0xFF1565C0),
   icon: Icons.sports_tennis_rounded,
   rules: TableTennisRules(),
-  buildPlay: (ctx) => ArcadeStage(
+  buildPlay: (ctx) => ctx.match != null
+      ? ArcadeDuelStage(
+          ctx: ctx,
+          create: () => RallySim((ctx.generated as GeneratedLevel<RallyLevel>).puzzle),
+          paint: paintRally,
+          bot: rallyBot,
+          sound: rallySound,
+        )
+      : ArcadeStage(
     ctx: ctx,
     create: () => RallySim((ctx.generated as GeneratedLevel<RallyLevel>).puzzle),
     paint: paintRally,
