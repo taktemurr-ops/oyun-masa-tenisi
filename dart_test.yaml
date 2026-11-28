@@ -1,0 +1,3 @@
+tags:
+  online:
+    skip: "çok istemcili çevrimiçi masa: ayrı CI işinde (--tags online --run-skipped)"
