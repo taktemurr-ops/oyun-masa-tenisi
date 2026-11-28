@@ -246,8 +246,9 @@ class RallySim extends ArcadeSim implements DuelSim {
     }
     _say(mine ? 'POINT!' : 'POINT ×');
     // game won?
-    final cap = ptsToWin + (tennis ? 3 : 4);
-    bool gameWon(int a, int b) => a >= ptsToWin && (a - b >= 2 || a >= cap);
+    // İki sayı fark şart, tavan yok (ITTF 2.11: 10-10'dan sonra iki sayı
+    // fark; tenis: belirli avantaj). Eskiden 15-14'te ani ölümle bitiyordu.
+    bool gameWon(int a, int b) => a >= ptsToWin && a - b >= 2;
     if (gameWon(myPts, cpuPts) || gameWon(cpuPts, myPts)) {
       final me = myPts > cpuPts;
       if (me) {
@@ -274,8 +275,11 @@ class RallySim extends ArcadeSim implements DuelSim {
         return;
       }
       server = 1 - server;
-    } else if (!tennis && (myPts + cpuPts) % 2 == 0) {
-      server = 1 - server;
+    } else if (!tennis) {
+      // Masa tenisi: servis iki sayıda bir el değiştirir; 10-10 (beraberlik)
+      // sonrası her sayıda (ITTF 2.13.3).
+      final deuce = myPts >= ptsToWin - 1 && cpuPts >= ptsToWin - 1;
+      if (deuce || (myPts + cpuPts) % 2 == 0) server = 1 - server;
     }
   }
 
@@ -564,7 +568,8 @@ class RallySim extends ArcadeSim implements DuelSim {
     if (!tennis) return '$a-$b';
     if (a >= 3 && b >= 3) {
       if (a == b) return 'DEUCE';
-      return a > b ? 'AD-IN' : 'AD-OUT';
+      // AD-IN: avantaj servis atanda.
+      return (a > b) == (server == 0) ? 'AD-IN' : 'AD-OUT';
     }
     return '${_tennisPts[a.clamp(0, 3)]}-${_tennisPts[b.clamp(0, 3)]}';
   }
